@@ -101,4 +101,5 @@ Newer UE BOOM/MEGABOOM generations may use different firmware behavior, BLE iden
 
 The following materials were meaningful during implementation and troubleshooting:
 
-- Reddit discussion that motivated/confirmed reverse-engineering approach (PacketLogger diffing, BLE wake write, and `<BT_MAC> + 01` insight): `https://www.reddit.com/r/shortcuts/comments/dz9zun/
+- Reddit discussion that motivated/confirmed reverse-engineering approach (PacketLogger diffing, BLE wake write, and `<BT_MAC> + 01` insight): `https://www.reddit.com/r/shortcuts/comments/dz9zun/`
+- Community gist documenting UE BOOM wake/control notes and related payload observations: `https://gist.github.com/marcust/af93ff47899583f5a52f`
