@@ -1,72 +1,110 @@
 # UE MEGABOOM Control on macOS
 
-This repo documents a practical reverse-engineering workflow for powering a UE speaker off and on from macOS using Python.
+Python CLI for powering UE BOOM / MEGABOOM speakers off and on from macOS.
 
-It includes:
-- `ueboom.py`: public, reusable CLI with no personal device IDs hardcoded.
+This repository is script-focused and public-facing:
+- `ueboom.py` is the main deliverable.
+- No app bundle or packaging steps are required to use it.
 
-## What We Found
+## How It Works
 
-### 1) OFF and ON use different radios/protocols
-- `off` is classic Bluetooth (RFCOMM / SPP style message).
-- `on` is BLE (GATT write to a specific characteristic).
+UE speakers use two different control paths:
+- `off`: classic Bluetooth RFCOMM/SPP
+- `on`: BLE GATT write
 
-That means OFF and ON are not symmetric operations:
-- OFF only works when the speaker is already on and reachable over classic BT.
-- ON works when the speaker is in BLE standby and advertising.
+This means OFF and ON are not symmetric:
+- OFF works when the speaker is already on and reachable over classic BT.
+- ON works when the speaker is in BLE standby (typically after OFF).
 
-### 2) OFF signal format (classic BT)
-- RFCOMM channel: `1`
-- Payload bytes: `02 01 B6`
+## Requirements
 
-In `ueboom.py`, this is sent through macOS `IOBluetooth` (`pyobjc-framework-IOBluetooth`).
+- macOS
+- Python 3.10+
+- `bleak`
+- `pyobjc-framework-IOBluetooth`
+- Optional: `blueutil` (improves reconnect behavior and unpair flows)
 
-### 3) ON signal format (BLE)
-- Characteristic UUID: `c6d6dc0d-07f5-47ef-9b59-630622b01fd3`
-- Observed wake payload shape: `<12 hex chars><01>`
+Install dependencies:
 
-Default generated payload is based on a controller identity (`host_mac`) and appends `01`.
+```bash
+python -m pip install bleak pyobjc-framework-IOBluetooth
+```
 
-### 4) About the "encrypted command"
-From packet-log analysis, the wake payload is best treated as an authenticated/trusted-controller token rather than plain text control bytes.
+## Bluetooth Permissions (macOS)
 
-Practical interpretation:
-- It behaves like a compact identity-based command marker.
-- The trailing `01` acts as an operation marker for wake in the observed captures.
-- Different firmware/device states may accept slightly different payload variants (normal or byte-reversed MAC derivation).
+Grant Bluetooth permission to the process you run from (Terminal, iTerm, VS Code, etc.).
 
-This repo does not claim to have fully broken UE's internal crypto scheme. Instead, it implements a robust, reproducible wake strategy from empirical captures.
+If missing, BLE commands may fail with timeouts or connection errors even when the speaker is nearby.
 
-### 5) BLE identity is not always stable
-On macOS, the CoreBluetooth device UUID used for BLE may vary across sessions/states.
+## Quick Start
 
-Mitigations implemented:
-- Candidate scanning using UE/Logitech advertisement fingerprint:
-  - FE9F service UUID (Fast Pair family)
-  - Logitech manufacturer ID `224`
-- Last-known BLE ID cache per speaker MAC
-- Optional fallback UUID list via env var
-
-## CLI Usage
+1. Find speaker and candidate BLE identities:
 
 ```bash
 python ueboom.py scan
-python ueboom.py probe --device <corebluetooth-uuid>
+```
+
+2. Turn speaker OFF (speaker must be on and connected):
+
+```bash
 python ueboom.py off --speaker-mac AA:BB:CC:DD:EE:FF
+```
+
+3. Turn speaker ON from standby:
+
+```bash
 python ueboom.py on --host-mac AA:BB:CC:DD:EE:FF --speaker-mac AA:BB:CC:DD:EE:FF
+```
+
+4. Optional deterministic cycle:
+
+```bash
 python ueboom.py cycle --host-mac AA:BB:CC:DD:EE:FF --speaker-mac AA:BB:CC:DD:EE:FF
 ```
 
+## Practical Notes From Real Usage
+
+### 1) Use explicit trusted controller when wake fails
+
+If wake fails with BLE errors like:
+- `CBATTErrorDomain Code=15 "Encryption is insufficient."`
+
+try overriding trusted controller identity explicitly:
+
+```bash
+python ueboom.py on \
+  --host-mac AA:BB:CC:DD:EE:FF \
+  --speaker-mac 11:22:33:44:55:66 \
+  --trusted-mac AA:BB:CC:DD:EE:FF
+```
+
+In practice, this often fixes stale or mismatched trusted payload issues.
+
+### 2) BLE device IDs can rotate
+
+CoreBluetooth UUIDs are not always stable across sessions.
+
+`ueboom.py` mitigates this via:
+- advertisement fingerprinting (FE9F service UUID and Logitech mfr ID `224`)
+- scan/retry candidate strategy
+- per-speaker cache of last known working BLE ID
+
+### 3) OFF command precondition is strict
+
+`off` sends RFCOMM payload `02 01 B6` on channel `1`.
+
+If the speaker is not currently reachable via classic Bluetooth, OFF can fail with RFCOMM channel/open errors.
+
 ## Environment Variables
 
-`ueboom.py` supports env defaults so commands can be shorter and reusable:
+You can set defaults so commands are shorter:
 
 - `UEBOOM_HOST_MAC`
 - `UEBOOM_SPEAKER_MAC`
 - `UEBOOM_DEVICE_ID`
 - `UEBOOM_PAYLOAD_HEX`
 - `UEBOOM_TRUSTED_MAC`
-- `UEBOOM_FALLBACK_DEVICE_IDS` (comma-separated UUIDs)
+- `UEBOOM_FALLBACK_DEVICE_IDS` (comma-separated CoreBluetooth UUIDs)
 
 Example:
 
@@ -77,29 +115,13 @@ python ueboom.py on
 python ueboom.py off
 ```
 
-## Requirements
+## Known Limitations
 
-- macOS
-- Python 3.10+
-- `bleak`
-- `pyobjc-framework-IOBluetooth`
-- Optional but recommended: `blueutil` for post-wake auto-connect handling
-
-## Limitations
-
-- Firmware behavior can vary by speaker generation/version.
-- BLE wake reliability depends on timing, RF conditions, and macOS BT stack state.
+- Behavior can differ by UE generation/firmware.
+- BLE reliability depends on timing, RF conditions, and macOS Bluetooth stack state.
 - This is reverse engineered behavior, not an official UE API.
-
-## Device Compatibility Note
-
-This script and workflow were developed and validated on a 2015 UE MEGABOOM.
-
-Newer UE BOOM/MEGABOOM generations may use different firmware behavior, BLE identifiers, or wake/control payload handling, so some commands or reliability characteristics may differ.
 
 ## References
 
-The following materials were meaningful during implementation and troubleshooting:
-
-- Reddit discussion that motivated/confirmed reverse-engineering approach (PacketLogger diffing, BLE wake write, and `<BT_MAC> + 01` insight): `https://www.reddit.com/r/shortcuts/comments/dz9zun/`
-- Community gist documenting UE BOOM wake/control notes and related payload observations: `https://gist.github.com/marcust/af93ff47899583f5a52f`
+- Reddit discussion that motivated PacketLogger-based reverse engineering: `https://www.reddit.com/r/shortcuts/comments/dz9zun/`
+- Community gist with related UE BOOM wake notes: `https://gist.github.com/marcust/af93ff47899583f5a52f`
