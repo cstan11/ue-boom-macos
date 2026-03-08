@@ -2,10 +2,6 @@
 
 Python CLI for powering UE BOOM / MEGABOOM speakers off and on from macOS.
 
-This repository is script-focused and public-facing:
-- `ueboom.py` is the main deliverable.
-- No app bundle or packaging steps are required to use it.
-
 ## How It Works
 
 UE speakers use two different control paths:
